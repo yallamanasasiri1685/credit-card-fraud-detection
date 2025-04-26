@@ -1,0 +1,153 @@
+# Credit Card Fraud Detection - Internship Ready
+# Written by: [Your Name] - 3rd Year Engineering Student
+
+# 1. Import Libraries
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, precision_recall_curve, f1_score
+
+import xgboost as xgb
+
+# 2. Load Training Data
+train_df = pd.read_csv("fraudTrain.csv")  # Change this to your actual training file name
+
+# 3. Feature Engineering Function (Reusable for both train and test)
+def preprocess_data(df):
+    df['trans_date_trans_time'] = pd.to_datetime(df['trans_date_trans_time'])
+    df['hour'] = df['trans_date_trans_time'].dt.hour
+    df['day'] = df['trans_date_trans_time'].dt.day
+    df['month'] = df['trans_date_trans_time'].dt.month
+
+    # Drop unnecessary columns
+    df = df.drop(['trans_date_trans_time', 'first', 'last', 'dob', 'street', 'city', 'state', 'zip', 'trans_num'], axis=1, errors='ignore')
+
+    # Encode categorical columns
+    cat_cols = ['merchant', 'category', 'gender', 'job']
+    df = pd.get_dummies(df, columns=[col for col in cat_cols if col in df.columns], drop_first=True)
+
+    return df
+
+# 4. Preprocess Training Data
+train_df = preprocess_data(train_df)
+
+# 5. Feature Scaling
+scaler = StandardScaler()
+num_cols = ['amt', 'lat', 'long', 'city_pop', 'unix_time', 'merch_lat', 'merch_long']
+train_df[num_cols] = scaler.fit_transform(train_df[num_cols])
+
+# 6. Prepare Features and Labels
+train_df = train_df.dropna(subset=['is_fraud'])  # Drop rows where the target value is missing
+
+X = train_df.drop('is_fraud', axis=1)
+y = train_df['is_fraud']
+
+# Train-Test Split
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+
+# 7. Train Model - Random Forest
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# 8. Evaluate on Validation Set
+y_pred = model.predict(X_val)
+y_pred_proba = model.predict_proba(X_val)[:, 1]
+
+# Print Classification Report
+print("Classification Report:")
+print(classification_report(y_val, y_pred))
+
+# Confusion Matrix
+print("Confusion Matrix:")
+cm = confusion_matrix(y_val, y_pred)
+print(cm)
+
+# ROC-AUC Score
+roc_auc = roc_auc_score(y_val, y_pred_proba)
+print(f"ROC-AUC: {roc_auc:.4f}")
+
+# Precision-Recall Curve
+precision, recall, thresholds = precision_recall_curve(y_val, y_pred_proba)
+plt.figure(figsize=(8,6))
+plt.plot(recall, precision, marker='.')
+plt.title('Precision-Recall Curve')
+plt.xlabel('Recall')
+plt.ylabel('Precision')
+plt.show()
+
+# F1-Score (Balance between Precision and Recall)
+f1 = f1_score(y_val, y_pred)
+print(f"F1 Score: {f1:.4f}")
+
+# Hyperparameter Tuning using GridSearchCV for better model performance
+param_grid = {
+    'n_estimators': [50, 100, 150],
+    'max_depth': [10, 20, None],
+    'min_samples_split': [2, 5, 10],
+    'min_samples_leaf': [1, 2, 4]
+}
+
+grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=5, n_jobs=-1, verbose=2)
+grid_search.fit(X_train, y_train)
+best_model = grid_search.best_estimator_
+
+# Best Model Evaluation
+y_pred_best = best_model.predict(X_val)
+y_pred_best_proba = best_model.predict_proba(X_val)[:, 1]
+
+print("\nBest Model Classification Report:")
+print(classification_report(y_val, y_pred_best))
+
+# Confusion Matrix for Best Model
+print("Best Model Confusion Matrix:")
+cm_best = confusion_matrix(y_val, y_pred_best)
+print(cm_best)
+
+# Misclassification Analysis: False Positives and False Negatives
+false_positives = X_val[y_pred_best == 1]
+false_negatives = X_val[y_pred_best == 0]
+
+print(f"\nNumber of False Positives: {len(false_positives)}")
+print(f"Number of False Negatives: {len(false_negatives)}")
+
+# Feature Importance
+feature_importances = best_model.feature_importances_
+sorted_idx = np.argsort(feature_importances)[::-1]
+
+plt.figure(figsize=(10, 6))
+plt.barh(X.columns[sorted_idx], feature_importances[sorted_idx])
+plt.title('Feature Importance')
+plt.xlabel('Importance')
+plt.ylabel('Feature')
+plt.show()
+
+# 9. Function to Predict Fraud in New Test Dataset
+def predict_on_new_data(fraudTest):
+    test_df = pd.read_csv(fraudTest)
+    test_df_original = test_df.copy()  # Keep the original test dataframe
+
+    test_df = preprocess_data(test_df)
+
+    # Align columns with training set
+    test_df = test_df.reindex(columns=X.columns, fill_value=0)
+
+    # Apply scaling
+    test_df[num_cols] = scaler.transform(test_df[num_cols])
+
+    # Predict fraud on new data
+    predictions = best_model.predict(test_df)
+    test_df_original['fraud_prediction'] = predictions
+
+    fraud_count = sum(predictions)
+    print(f"\n🔍 Detected {fraud_count} fraudulent transactions out of {len(test_df)} in the test file.")
+    return test_df_original
+
+# 10. Usage Example for New File
+# Uncomment and replace with your test CSV
+# test_results = predict_on_new_data("fraudTest.csv")
+# print(test_results.head())
